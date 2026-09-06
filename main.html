@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ESP32 Race Controller</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 20px; background: #121212; color: #fff; }
+    button { padding: 15px 30px; font-size: 18px; border-radius: 8px; border: none; background: #00e676; font-weight: bold; }
+    .val { font-size: 24px; margin: 20px; color: #00e0ff; }
+  </style>
+</head>
+<body>
+  <h2>ESP32 Tilt Controller</h2>
+  <button onclick="connectBLE()">CONNECT ESP32</button>
+  <div class="val" id="status">Status: Disconnected</div>
+  <div class="val" id="data">Pitch: 0 | Roll: 0</div>
+
+<script>
+const SERVICE_UUID = "4fa86011-0053-4939-b157-578749c20001";
+const CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+let tiltChar = null;
+
+async function connectBLE() {
+  try {
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: 'ESP32_Secure_Race' }],
+      optionalServices: [SERVICE_UUID]
+    });
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    tiltChar = await service.getCharacteristic(CHAR_UUID);
+    document.getElementById('status').innerText = "Status: Connected!";
+    
+    // Request motion permission if iOS
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      await DeviceOrientationEvent.requestPermission();
+    }
+    window.addEventListener('deviceorientation', handleMotion);
+  } catch (e) {
+    document.getElementById('status').innerText = "Error: " + e;
+  }
+}
+
+function handleMotion(event) {
+  if (!tiltChar) return;
+  let pitch = event.beta || 0;  // Front/Back tilt
+  let roll  = event.gamma || 0; // Left/Right tilt
+  
+  document.getElementById('data').innerText = `Pitch: ${pitch.toFixed(1)} | Roll: ${roll.toFixed(1)}`;
+  
+  // Pack 2 floats (8 bytes) into binary array
+  let buffer = new ArrayBuffer(8);
+  let view = new DataView(buffer);
+  view.setFloat32(0, pitch, true); // Little endian
+  view.setFloat32(4, roll, true);
+  
+  tiltChar.writeValueWithoutResponse(buffer);
+}
+</script>
+</body>
+</html>
