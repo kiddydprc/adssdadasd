@@ -58,14 +58,18 @@
 <script>
 const SERVICE_UUID = "4fa86011-0053-4939-b157-578749c20001";
 const CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+
 let tiltChar = null;
+let latestPitch = 0;
+let latestRoll = 0;
+let lastSentRoll = 0;
+let sendInterval = null;
 
 async function connectBLE() {
   const statusElem = document.getElementById('status');
   try {
     statusElem.innerText = "Scanning for ESP32...";
 
-    // Uses acceptAllDevices to ensure ESP32 appears on all phones
     const device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: [SERVICE_UUID]
@@ -83,13 +87,17 @@ async function connectBLE() {
     statusElem.innerText = "Status: CONNECTED";
     statusElem.style.color = "#00e676";
 
-    // Request iOS device orientation permissions
+    // iOS Orientation Permission
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       await DeviceOrientationEvent.requestPermission();
     }
 
-    // Capture sensor data at high frequency
-    window.addEventListener('deviceorientation', handleOrientation, true);
+    // Event listener ONLY updates variables (does not send BLE data directly)
+    window.addEventListener('deviceorientation', handleSensorData, true);
+
+    // Start fixed 50Hz BLE transmit loop (20ms) to kill BLE queue delay
+    if (sendInterval) clearInterval(sendInterval);
+    sendInterval = setInterval(sendBLEData, 20);
 
   } catch (err) {
     statusElem.innerText = "Error: " + err.message;
@@ -97,15 +105,20 @@ async function connectBLE() {
   }
 }
 
-function handleOrientation(event) {
+function handleSensorData(event) {
+  latestPitch = event.beta || 0;
+  latestRoll  = event.gamma || 0;
+}
+
+function sendBLEData() {
   if (!tiltChar) return;
 
-  let pitch = event.beta || 0;  // Front/Back tilt (-180 to 180)
-  let roll  = event.gamma || 0; // Left/Right tilt (-90 to 90)
+  // Round values to 1 decimal place to eliminate raw sensor noise
+  let pitch = Math.round(latestPitch * 10) / 10;
+  let roll  = Math.round(latestRoll * 10) / 10;
 
   document.getElementById('data').innerText = `Pitch: ${pitch.toFixed(1)}° | Roll: ${roll.toFixed(1)}°`;
 
-  // UI Indicator logic
   const indicator = document.getElementById('ledIndicator');
   if (pitch > 20 || pitch < -20 || roll > 20 || roll < -20) {
     indicator.classList.add('active');
@@ -113,14 +126,18 @@ function handleOrientation(event) {
     indicator.classList.remove('active');
   }
 
-  // Pack two 32-bit floats (8 bytes) into binary array
-  let buffer = new ArrayBuffer(8);
-  let view = new DataView(buffer);
-  view.setFloat32(0, pitch, true); // Little-Endian
-  view.setFloat32(4, roll, true);  // Little-Endian
+  // Only send packet if roll changed by more than 0.5° (Deadband filter)
+  if (Math.abs(roll - lastSentRoll) >= 0.5) {
+    lastSentRoll = roll;
 
-  // Send over BLE without response (sub-10ms speed)
-  tiltChar.writeValueWithoutResponse(buffer);
+    let buffer = new ArrayBuffer(8);
+    let view = new DataView(buffer);
+    view.setFloat32(0, pitch, true);
+    view.setFloat32(4, roll, true);
+
+    // Send without response
+    tiltChar.writeValueWithoutResponse(buffer).catch(() => {});
+  }
 }
 </script>
 </body>
