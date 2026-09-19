@@ -38,12 +38,6 @@
     button:active { background-color: #2ea043; }
     .status { font-size: 16px; margin-top: 15px; color: #d29922; }
     .data { font-size: 20px; font-weight: bold; margin-top: 15px; color: #58a6ff; }
-    .indicator {
-      width: 30px; height: 30px; border-radius: 50%;
-      background-color: #21262d; margin: 15px auto;
-      border: 2px solid #30363d;
-    }
-    .indicator.active { background-color: #da3633; box-shadow: 0 0 12px #da3633; }
   </style>
 </head>
 <body>
@@ -55,7 +49,6 @@
     <button onclick="connectBLE()">CONNECT MARBLEMAZE</button>
     <div id="status" class="status">Status: Disconnected</div>
     <div id="data" class="data">Pitch: 0.0° | Roll: 0.0°</div>
-    <div id="ledIndicator" class="indicator"></div>
   </div>
 
 <script>
@@ -74,12 +67,13 @@ async function connectBLE() {
   try {
     statusElem.innerText = "Scanning for MarbleMaze...";
 
+    // Request device accepting all devices or filtering by service
     const device = await navigator.bluetooth.requestDevice({
-      filters: [{ name: 'MarbleMaze' }],
+      acceptAllDevices: true,
       optionalServices: [SERVICE_UUID]
     });
 
-    statusElem.innerText = "Connecting to " + device.name + "...";
+    statusElem.innerText = "Connecting to " + (device.name || "MarbleMaze") + "...";
     const server = await device.gatt.connect();
     
     statusElem.innerText = "Getting Service...";
@@ -91,6 +85,7 @@ async function connectBLE() {
     statusElem.innerText = "Status: CONNECTED";
     statusElem.style.color = "#3fb950";
 
+    // Request orientation permission for iOS
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       await DeviceOrientationEvent.requestPermission();
     }
@@ -98,7 +93,7 @@ async function connectBLE() {
     window.addEventListener('deviceorientation', handleSensorData, true);
 
     if (sendInterval) clearInterval(sendInterval);
-    sendInterval = setInterval(sendBLEData, 20); // 50Hz update rate
+    sendInterval = setInterval(sendBLEData, 20); // 50Hz update loop
 
   } catch (err) {
     statusElem.innerText = "Error: " + err.message;
@@ -119,14 +114,6 @@ function sendBLEData() {
 
   document.getElementById('data').innerText = `Pitch: ${pitch.toFixed(1)}° | Roll: ${roll.toFixed(1)}°`;
 
-  const indicator = document.getElementById('ledIndicator');
-  if (Math.abs(pitch) > 20 || Math.abs(roll) > 20) {
-    indicator.classList.add('active');
-  } else {
-    indicator.classList.remove('active');
-  }
-
-  // Transmit if pitch or roll changed by > 0.4°
   if (Math.abs(pitch - lastSentPitch) >= 0.4 || Math.abs(roll - lastSentRoll) >= 0.4) {
     lastSentPitch = pitch;
     lastSentRoll  = roll;
