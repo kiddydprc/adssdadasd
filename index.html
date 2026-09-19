@@ -3,56 +3,59 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP32 Race Tilt Controller</title>
+  <title>MarbleMaze Controller</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: #121212;
+      background-color: #0d1117;
       color: #ffffff;
       text-align: center;
       padding: 20px;
       margin: 0;
     }
     .card {
-      background: #1e1e1e;
-      border-radius: 12px;
-      padding: 20px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      padding: 24px;
       margin: 20px auto;
-      max-width: 400px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+      max-width: 380px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     }
+    h2 { color: #58a6ff; margin-bottom: 5px; }
     button {
-      background-color: #00e676;
-      color: #000;
+      background-color: #238636;
+      color: #ffffff;
       font-size: 18px;
       font-weight: bold;
-      padding: 16px 32px;
+      padding: 16px;
       border: none;
-      border-radius: 8px;
+      border-radius: 10px;
       cursor: pointer;
       width: 100%;
+      margin-top: 15px;
     }
-    button:active { background-color: #00c853; }
-    .status { font-size: 18px; margin-top: 15px; color: #ffab00; }
-    .data { font-size: 22px; font-weight: bold; margin-top: 15px; color: #00e0ff; }
+    button:active { background-color: #2ea043; }
+    .status { font-size: 16px; margin-top: 15px; color: #d29922; }
+    .data { font-size: 20px; font-weight: bold; margin-top: 15px; color: #58a6ff; }
     .indicator {
-      width: 40px; height: 40px; border-radius: 50%;
-      background-color: #333; margin: 15px auto;
-      border: 2px solid #555;
+      width: 30px; height: 30px; border-radius: 50%;
+      background-color: #21262d; margin: 15px auto;
+      border: 2px solid #30363d;
     }
-    .indicator.active { background-color: #ff1744; box-shadow: 0 0 15px #ff1744; }
+    .indicator.active { background-color: #da3633; box-shadow: 0 0 12px #da3633; }
   </style>
 </head>
 <body>
 
-  <h2>ESP32 Motion Controller</h2>
+  <h2>MarbleMaze</h2>
+  <p style="font-size: 13px; color: #8b949e; margin-top: 0;">Phone Motion Controller</p>
 
   <div class="card">
-    <button onclick="connectBLE()">CONNECT ESP32</button>
+    <button onclick="connectBLE()">CONNECT MARBLEMAZE</button>
     <div id="status" class="status">Status: Disconnected</div>
-    <div id="data" class="data">Pitch: 0° | Roll: 0°</div>
+    <div id="data" class="data">Pitch: 0.0° | Roll: 0.0°</div>
     <div id="ledIndicator" class="indicator"></div>
-    <p style="font-size: 12px; color: #888;">LED indicator lights up when tilt > ±20°</p>
   </div>
 
 <script>
@@ -62,16 +65,17 @@ const CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 let tiltChar = null;
 let latestPitch = 0;
 let latestRoll = 0;
+let lastSentPitch = 0;
 let lastSentRoll = 0;
 let sendInterval = null;
 
 async function connectBLE() {
   const statusElem = document.getElementById('status');
   try {
-    statusElem.innerText = "Scanning for ESP32...";
+    statusElem.innerText = "Scanning for MarbleMaze...";
 
     const device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
+      filters: [{ name: 'MarbleMaze' }],
       optionalServices: [SERVICE_UUID]
     });
 
@@ -85,23 +89,20 @@ async function connectBLE() {
     tiltChar = await service.getCharacteristic(CHAR_UUID);
 
     statusElem.innerText = "Status: CONNECTED";
-    statusElem.style.color = "#00e676";
+    statusElem.style.color = "#3fb950";
 
-    // iOS Orientation Permission
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       await DeviceOrientationEvent.requestPermission();
     }
 
-    // Event listener ONLY updates variables (does not send BLE data directly)
     window.addEventListener('deviceorientation', handleSensorData, true);
 
-    // Start fixed 50Hz BLE transmit loop (20ms) to kill BLE queue delay
     if (sendInterval) clearInterval(sendInterval);
-    sendInterval = setInterval(sendBLEData, 20);
+    sendInterval = setInterval(sendBLEData, 20); // 50Hz update rate
 
   } catch (err) {
     statusElem.innerText = "Error: " + err.message;
-    statusElem.style.color = "#ff1744";
+    statusElem.style.color = "#f85149";
   }
 }
 
@@ -113,29 +114,28 @@ function handleSensorData(event) {
 function sendBLEData() {
   if (!tiltChar) return;
 
-  // Round values to 1 decimal place to eliminate raw sensor noise
   let pitch = Math.round(latestPitch * 10) / 10;
   let roll  = Math.round(latestRoll * 10) / 10;
 
   document.getElementById('data').innerText = `Pitch: ${pitch.toFixed(1)}° | Roll: ${roll.toFixed(1)}°`;
 
   const indicator = document.getElementById('ledIndicator');
-  if (pitch > 20 || pitch < -20 || roll > 20 || roll < -20) {
+  if (Math.abs(pitch) > 20 || Math.abs(roll) > 20) {
     indicator.classList.add('active');
   } else {
     indicator.classList.remove('active');
   }
 
-  // Only send packet if roll changed by more than 0.5° (Deadband filter)
-  if (Math.abs(roll - lastSentRoll) >= 0.5) {
-    lastSentRoll = roll;
+  // Transmit if pitch or roll changed by > 0.4°
+  if (Math.abs(pitch - lastSentPitch) >= 0.4 || Math.abs(roll - lastSentRoll) >= 0.4) {
+    lastSentPitch = pitch;
+    lastSentRoll  = roll;
 
     let buffer = new ArrayBuffer(8);
     let view = new DataView(buffer);
     view.setFloat32(0, pitch, true);
     view.setFloat32(4, roll, true);
 
-    // Send without response
     tiltChar.writeValueWithoutResponse(buffer).catch(() => {});
   }
 }
